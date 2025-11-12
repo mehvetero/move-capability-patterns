@@ -1,0 +1,65 @@
+# Sui-Specific Security Notes
+
+## Object Ownership Model
+
+Sui has four ownership types:
+
+1. **Owned**: belongs to a specific address. Only that address can use it in a transaction.
+2. **Shared**: accessible by any transaction. Requires consensus ordering.
+3. **Immutable**: frozen forever. Anyone can read, nobody can modify.
+4. **Wrapped**: stored inside another object. Accessibility depends on the parent.
+
+Security implications:
+- Owned objects enable parallel transaction execution (no consensus needed) — fast but means the owner is a single point of failure
+- Shared objects go through consensus — slower but accessible by multiple parties
+- Converting owned → shared is one-way and irreversible
+
+## Programmable Transaction Blocks (PTBs)
+
+PTBs allow composing multiple operations in a single transaction without deploying a contract:
+
+```
+1. split coins
+2. call protocol A deposit
+3. call protocol B swap
+4. transfer result
+```
+
+Security implications:
+- PTBs enable flash-loan-like composability WITHOUT a flash loan contract
+- Any sequence of public function calls can be composed atomically
+- Protocols cannot assume their functions are called in isolation
+- `entry` functions cannot be composed in PTBs — use `entry` for operations that should not be part of a larger atomic sequence
+
+## Clock and Randomness
+
+- `Clock` is a shared object (`0x6`) updated by validators each checkpoint (~2-3 seconds)
+- Not manipulable by users (unlike EVM `block.timestamp`)
+- Randomness: `Random` object (`0x8`) provides on-chain randomness post-Sui v1.22
+- Pre-1.22: no native randomness, protocols used commit-reveal or external oracles
+
+## Type Confusion in Generic Functions
+
+```move
+public fun process<T: store>(item: T) {
+    // This function accepts ANY type with store ability
+    // If it does something security-sensitive, the type parameter
+    // must be constrained or verified at runtime
+}
+```
+
+An attacker can pass a custom type that satisfies the ability constraints but has unexpected behavior. For example, a custom `Coin<FakeToken>` passed to a function expecting `Coin<USDC>` if the function only checks `Coin<T>` generically.
+
+Defense: use witness pattern or verify the type via `type_name::get<T>()` at runtime.
+
+## Module Initializer (`init`)
+
+- Runs exactly once when the package is published
+- Cannot be called again (not even by the package owner)
+- Used to create admin capabilities, set initial state
+- If the init function is buggy, there is no way to re-run it — the only option is to publish a new package
+
+What to check:
+- Does `init` create all necessary capabilities?
+- Does it transfer them to the right address (not a hardcoded address that might be wrong)?
+- Does it set all initial parameters (fees, thresholds, oracle addresses)?
