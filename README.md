@@ -21,3 +21,4 @@ After spending a year on EVM auditing, I started looking at Move because:
 
 - [evm-audit-checklist](https://github.com/mehvetero/evm-audit-checklist) — EVM-focused checklist (started there, now expanding to Move)
 - [defi-incident-notes](https://github.com/mehvetero/defi-incident-notes) — post-mortem analysis of real incidents
+
