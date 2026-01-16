@@ -16,3 +16,8 @@ After spending a year on EVM auditing, I started looking at Move because:
 1. More DeFi TVL is moving to Sui and Aptos
 2. The security model is different enough that EVM audit intuitions do not transfer directly
 3. The capability pattern is elegant but has its own failure modes that are under-documented
+
+## Related
+
+- [evm-audit-checklist](https://github.com/mehvetero/evm-audit-checklist) — EVM-focused checklist (started there, now expanding to Move)
+- [defi-incident-notes](https://github.com/mehvetero/defi-incident-notes) — post-mortem analysis of real incidents
