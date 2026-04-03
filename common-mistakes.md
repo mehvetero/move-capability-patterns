@@ -93,3 +93,39 @@ The pattern is safe because `Receipt` cannot be dropped — the transaction MUST
 - Adding `drop` ability to the receipt type (defeats the purpose)
 - Providing an alternative destructor that does not enforce repayment
 - Wrapping the receipt in another object that has `drop`
+
+## 6. Oracle Price Update Without Staleness Check
+
+```move
+public fun update_price(feeder_cap: &PriceFeederCap, oracle: &mut Oracle, price: u64) {
+    oracle.price = price;
+    oracle.last_updated = clock::timestamp_ms(clock);
+}
+
+public fun get_price(oracle: &Oracle): u64 {
+    oracle.price  // no staleness check
+}
+```
+
+Any consumer of `get_price` trusts that the price is recent. If the oracle feeder stops updating (crash, key loss, network issue), the stale price persists indefinitely.
+
+Fix:
+```move
+public fun get_price(oracle: &Oracle, clock: &Clock): u64 {
+    let now = clock::timestamp_ms(clock);
+    assert!(now - oracle.last_updated < MAX_STALENESS_MS, EStalePrice);
+    oracle.price
+}
+```
+
+## 7. Single-Key Admin on High-TVL Protocol
+
+Not a code bug — an operational risk. If the protocol has >$10M TVL and the admin is a single EOA:
+- Private key compromise = total loss
+- Key loss = permanent lock (no recovery)
+- No accountability (one person can rug)
+
+Pattern seen in multiple Sui protocols. The fix is straightforward:
+- Multisig (2-of-3 minimum) for admin operations
+- Timelock on upgrades and parameter changes
+- Event emission for all admin actions (most Sui protocols miss this — MoveBit DIS-1 finding is common)
