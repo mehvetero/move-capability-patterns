@@ -63,3 +63,17 @@ What to check:
 - Does `init` create all necessary capabilities?
 - Does it transfer them to the right address (not a hardcoded address that might be wrong)?
 - Does it set all initial parameters (fees, thresholds, oracle addresses)?
+
+## Cetus Protocol Exploit ($260M, May 2025)
+
+The largest Sui DeFi exploit so far. Not a capability bug — it was a math/overflow issue in the concentrated liquidity pool:
+
+- Attacker exploited a rounding error in the `checked_shlw` function (bit shift)
+- The overflow caused the pool to return more tokens than the actual liquidity justified
+- Drained across multiple pools in minutes
+
+Lessons for Sui auditors:
+1. Math libraries in Move need the same scrutiny as in Solidity — `u128`/`u256` overflow, rounding direction, edge cases at min/max values
+2. The Sui type system prevents reentrancy but does NOT prevent logic bugs
+3. "Safe by construction" (Move's marketing) means memory-safe, not logic-safe
+4. Concentrated liquidity math is inherently complex — any protocol forking Cetus-style pools should get independent math review, not just a code audit
