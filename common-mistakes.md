@@ -129,3 +129,49 @@ Pattern seen in multiple Sui protocols. The fix is straightforward:
 - Multisig (2-of-3 minimum) for admin operations
 - Timelock on upgrades and parameter changes
 - Event emission for all admin actions (most Sui protocols miss this — MoveBit DIS-1 finding is common)
+
+## 8. Authorization Check Without Assert (Typus Pattern)
+
+The most dangerous variant of mistake #1 — the authorization function is called, the arguments are correct, the code reads like a proper check, but the result is silently discarded:
+
+```move
+// DANGEROUS: return value of contains() thrown away
+public fun update_v2(
+    oracle: &mut Oracle,
+    update_authority: &UpdateAuthority,
+    price: u64,
+    clock: &Clock,
+    ctx: &mut TxContext
+) {
+    // "check authority"
+    vector::contains(&update_authority.authority, &tx_context::sender(ctx));
+    // ↑ returns bool, nobody reads it
+    update_(oracle, price, clock, ctx);
+}
+```
+
+Why it is dangerous: this is harder to spot than a missing check entirely. A reviewer sees `vector::contains`, sees the authority parameter, sees the comment — and moves on. The function name implies a check. The arguments are correct. The only thing missing is one keyword:
+
+```move
+// FIXED: assert the result
+assert!(
+    vector::contains(&update_authority.authority, &tx_context::sender(ctx)),
+    E_UNAUTHORIZED
+);
+```
+
+Real-world impact: Typus Finance lost $3.44M in October 2025 to exactly this pattern. The oracle module had been live for eleven months. MoveBit audited the protocol — the oracle was excluded from scope.
+
+Why Move does not catch this: `vector::contains()` returns `bool`. `bool` has the `drop` ability in Move, so discarding it is a valid operation. The compiler emits no warning. Rust has `#[must_use]` for this — Move does not have an equivalent annotation.
+
+Three different objects, three authorization patterns in the same codebase:
+
+| Object | Created with | Who can use | Auth mechanism |
+|--------|-------------|-------------|----------------|
+| `ManagerCap` | `transfer::transfer` (owned) | Only the holder | Ownership — type system enforces |
+| `UpdateCap` (post-fix) | `transfer::share_object` (shared) | Anyone who passes `assert!` | Runtime check — developer must remember |
+| `UpdateAuthority` (vulnerable) | `transfer::share_object` (shared) | Anyone at all | None — check result discarded |
+
+The owned pattern (`ManagerCap`) cannot fail this way — you either have the object or you do not. The shared-with-assert pattern (`UpdateCap`) works but depends on the developer writing the assert. The shared-without-assert pattern (`UpdateAuthority`) is the $3.44M bug.
+
+When to pick shared over owned: multiple addresses need concurrent access (e.g., automated crankers updating an oracle from different wallets). In that case, the `assert!` is the entire access control — there is no structural backup. Test it, lint for it, and treat its absence as a critical finding.
