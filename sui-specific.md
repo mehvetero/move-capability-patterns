@@ -77,3 +77,39 @@ Lessons for Sui auditors:
 2. The Sui type system prevents reentrancy but does NOT prevent logic bugs
 3. "Safe by construction" (Move's marketing) means memory-safe, not logic-safe
 4. Concentrated liquidity math is inherently complex — any protocol forking Cetus-style pools should get independent math review, not just a code audit
+
+## Attribute Scope in Move — the `#[test_only]` Annotation Trap
+
+Move attributes (`#[test_only]`, `#[test]`, `#[expected_failure]`) apply to **the next item only** — the next function, struct, use, or const. They do not scope to a block or a file.
+
+This sounds simple, but it creates a class of bugs in any tool that parses Move source:
+
+```move
+module example::pool {
+    #[test_only]
+    use sui::test_scenario;      // ← attribute applies to this use
+
+    public fun drain(pool: &mut Pool) {   // ← this is NOT test_only
+        pool.balance = 0;
+    }
+}
+```
+
+A static analysis tool that tracks `#[test_only]` as a boolean flag — set when seen, cleared when a function is found — will skip `drain` because the flag was set by the `use` statement two lines above. The attribute consumed its target (`use sui::test_scenario`), but the flag persists.
+
+This is not hypothetical. I found this exact bug in my own linter (move-test-gen MOV-001) during a security audit. The fix: clear the flag on **any** item keyword (`fun`, `use`, `struct`, `const`), not just `fun`.
+
+The same trap applies to `#[test]`:
+
+```move
+#[test]
+const SETUP_VALUE: u64 = 42;    // ← attribute consumed here
+
+fun real_production_code() {     // ← this is NOT a test function
+    // ...but a naive parser thinks it is
+}
+```
+
+What makes this insidious: `#[test_only] use sui::test_scenario;` is one of the most common lines in a tested Move module. A linter that skips the first function after it is silently blind on a large fraction of real codebases.
+
+Rule: when parsing Move attributes, consume the flag on the **next item of any kind**, not just the next function.
