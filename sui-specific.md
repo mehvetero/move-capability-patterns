@@ -113,3 +113,36 @@ fun real_production_code() {     // ← this is NOT a test function
 What makes this insidious: `#[test_only] use sui::test_scenario;` is one of the most common lines in a tested Move module. A linter that skips the first function after it is silently blind on a large fraction of real codebases.
 
 Rule: when parsing Move attributes, consume the flag on the **next item of any kind**, not just the next function.
+
+## Mistake #9 — Package Upgrade Without Retiring Old Entry Points
+
+On Sui, upgrading a package does not disable the previous version. Both versions remain callable on the same shared objects. This is by design — it prevents breaking existing integrations. But it creates a hard requirement: every version must agree on where mutable state lives.
+
+When an upgrade relocates token storage (e.g., from a struct field to a dynamic object field), both the old and new versions can still read and write the same accounting fields. If they write different values, the shared field becomes version-dependent — its meaning changes depending on which version touched it last.
+
+Concrete example (BlueMove, July 2026):
+
+```
+// V1 swap — writes reserve from pool balance
+let (bal_x, bal_y) = token_balances(pool);
+update(bal_x, bal_y, pool);
+// → reserve_x = pool.token_x.value()
+
+// V-latest swap — writes reserve from escrow balance
+let esc_x = balance::value(&escrow.token_x);
+let esc_y = balance::value(&escrow.token_y);
+update(esc_x, esc_y, pool);
+// → reserve_x = escrow.token_x.value()
+```
+
+Both versions call `update()`, which writes `pool.reserve_x`. But `pool.token_x` and `escrow.token_x` are independent balances. If the escrow holds 350,000 SUI and `pool.token_x` holds 7,000 SUI, whichever version wrote last determines whether `reserve_x` is 350K or 7K. Every formula downstream — LP pricing, withdrawal calculation, K-invariant check — computes a correct answer to the wrong number.
+
+The three conditions that produce this:
+
+1. **Storage relocation**: the upgrade moves assets to a new location
+2. **Shared accounting field**: both versions overwrite the same field with values from their respective stores
+3. **Old version still callable**: V1 functions are not gated or disabled
+
+The fix is architectural: if you relocate storage, the old version's write path to the shared field must be disabled. On Sui, this means either version-checking inside the shared functions, or migrating all state in a single atomic transaction before burning the UpgradeCap.
+
+Making the package immutable (burning UpgradeCap) after introducing a storage split locks the vulnerability in permanently.
