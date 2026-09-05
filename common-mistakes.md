@@ -175,3 +175,33 @@ Three different objects, three authorization patterns in the same codebase:
 The owned pattern (`ManagerCap`) cannot fail this way — you either have the object or you do not. The shared-with-assert pattern (`UpdateCap`) works but depends on the developer writing the assert. The shared-without-assert pattern (`UpdateAuthority`) is the $3.44M bug.
 
 When to pick shared over owned: multiple addresses need concurrent access (e.g., automated crankers updating an oracle from different wallets). In that case, the `assert!` is the entire access control — there is no structural backup. Test it, lint for it, and treat its absence as a critical finding.
+
+## 9. Governance-Gated Vault Control Without Participation Floor
+
+```move
+// Simplified pattern — governance vote controls vault strategy
+public fun execute_proposal(
+    gov: &mut Governance,
+    proposal_id: u64,
+    ctx: &TxContext,
+) {
+    let proposal = table::borrow(&gov.proposals, proposal_id);
+    assert!(proposal.votes_for > proposal.votes_against, E_NOT_PASSED);
+    // execute whatever the proposal says — add strategy, move funds, change timelock
+    execute_actions(proposal.actions);
+}
+```
+
+Why it is dangerous: if the governance token has thin staking participation, an attacker can buy a supermajority cheaply and pass any proposal — including one that drains the vault. The code above has no minimum quorum, no concentration check, and no separation between who can propose changes to safety parameters (like the timelock) and who benefits from those changes.
+
+Real-world impact: Term Finance lost $8.5M in August 2026. The attacker purchased 90.66% of the vault governance token for approximately $951 (total staked supply was 0.5352 gtmvETH). The first proposal action zeroed the timelock, removing the delay on all subsequent proposals. The second added a drain strategy. Both passed through a legitimate vote. No code was exploited — the governance mechanism executed as designed.
+
+The deeper problem: the timelock was governed by the same vote it was supposed to constrain. Once the attacker had the majority, the timelock provided exactly one window of protection. After that first execution, the attacker owned the clock.
+
+What should exist:
+- Minimum quorum — proposals below a participation threshold cannot execute regardless of vote ratio
+- Concentration circuit breaker — if a single address holds >X% of voting power, governance enters emergency mode
+- Timelock immutability — safety parameters (timelock duration, veto window) require a separate approval path, not the same governance that benefits from changing them
+- Active monitoring — a veto mechanism nobody watches is the same as no veto mechanism
+
+This is not Move-specific — any chain, any language. But Move protocols building governance layers on top of capability-based access control should be especially careful: the capability model is strong precisely because it is structural, not democratic. Layering a thin-market vote on top of it reintroduces the human participation dependency that capabilities were designed to eliminate.
