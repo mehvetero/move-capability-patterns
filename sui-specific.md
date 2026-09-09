@@ -146,3 +146,18 @@ The three conditions that produce this:
 The fix is architectural: if you relocate storage, the old version's write path to the shared field must be disabled. On Sui, this means either version-checking inside the shared functions, or migrating all state in a single atomic transaction before burning the UpgradeCap.
 
 Making the package immutable (burning UpgradeCap) after introducing a storage split locks the vulnerability in permanently.
+
+## Move Arithmetic Safety vs EVM
+
+Move's integer arithmetic aborts the transaction on overflow. On EVM, unchecked overflow wraps silently (pre-Solidity 0.8) or reverts (post-0.8 with default checks, but `unchecked {}` blocks still wrap). This changes the severity class of arithmetic findings:
+
+| Pattern | EVM (unchecked) | EVM (checked) | Move |
+|---------|----------------|---------------|------|
+| u64 * u64 overflow | Silent wrap → fund drain | Revert | Abort → DoS |
+| u128 → u64 downcast | Silent truncation | Silent truncation | Silent truncation |
+| x / 0 | Revert | Revert | Abort |
+| x << 64 | Silent zero | Silent zero | Silent zero |
+
+Key takeaway: multiplication overflow on Move is a **DoS risk** (the transaction fails), not a **fund-loss risk** (the attacker does not get more tokens than they should). Bit-shifts and downcasts are the same on both — they silently produce wrong values without aborting.
+
+When reviewing a Move contract that was ported from Solidity, do not downgrade overflow findings to informational. The abort still breaks the function for legitimate users — a repay path that aborts on large positions locks those positions permanently.
