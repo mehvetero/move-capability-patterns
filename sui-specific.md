@@ -147,6 +147,39 @@ The fix is architectural: if you relocate storage, the old version's write path 
 
 Making the package immutable (burning UpgradeCap) after introducing a storage split locks the vulnerability in permanently.
 
+## Mistake #10 — Single AdminCap Without Timelock or Multisig
+
+A shared object guarded by a single `AdminCap` with `has key, store` means one EOA controls every config change — fees, reward rates, pause flags, prize distribution, token minting parameters — with no delay and no co-signer.
+
+```move
+struct AdminCap has key, store { id: UID }
+
+public fun set_fees(cap: &AdminCap, config: &mut Config, new_fee: u64) {
+    config.fee_bps = new_fee;
+}
+
+public fun set_reward_rate(cap: &AdminCap, config: &mut Config, rate: u64) {
+    config.reward_per_epoch = rate;
+}
+
+public fun withdraw_dev_pool(cap: &AdminCap, bank: &mut Bank, amount: u64, ctx: &mut TxContext): Coin<SUI> {
+    // ...
+}
+```
+
+The `store` ability means the cap can be freely transferred — whoever holds it IS the admin, no on-chain identity check. If the holder's key leaks, everything is instant.
+
+What makes this worse than it looks: the cap holder can typically change every economic parameter in one transaction. Set fees to 100%, drain the dev pool, pause user withdrawals, redirect prize distribution — all in a single PTB. There is no delay for users to react and no second signer to block it.
+
+This pattern shows up constantly. I have seen it in on-chain game contracts, lending protocols, DEX fee configs, and yield optimizers on Sui. In every case the AdminCap was a single shared object with `store`, held by one address, with no timelock wrapper.
+
+The defense isn't complicated:
+- Wrap the cap in a timelock module — `propose(action) → wait(delay) → execute(action)`. Users get a window to exit.
+- Or use a k-of-n scheme — the cap lives in a multisig or a governance wrapper.
+- At minimum, drop `store` if the cap should never move. `has key` alone pins it to the original owner.
+
+Not every project needs full governance. But "one key, instant effect, all parameters" is a single point of failure that should be called out in any review.
+
 ## Move Arithmetic Safety vs EVM
 
 Move's integer arithmetic aborts the transaction on overflow. On EVM, unchecked overflow wraps silently (pre-Solidity 0.8) or reverts (post-0.8 with default checks, but `unchecked {}` blocks still wrap). This changes the severity class of arithmetic findings:
